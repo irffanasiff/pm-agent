@@ -1,0 +1,10 @@
+name = "polymarket-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Deploy to US region for Polymarket access
+[placement]
+mode = "smart"
+
+# Environment variables (set via wrangler secret)
+# PROXY_SECRET - optional auth token to protect your proxy
