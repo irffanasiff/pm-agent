@@ -73,16 +73,26 @@ export async function runDiscovery(input: DiscoveryInput): Promise<DiscoveryResu
   const client = getPolymarketClient();
 
   // Fetch more markets than needed to filter down
+  // IMPORTANT: active=true means market exists, closed=false means not ended yet
   const fetchLimit = Math.max((input.maxResults ?? 10) * 5, 50);
   const rawMarkets = await client.getMarkets({
     limit: fetchLimit,
     active: true,
+    closed: false,  // Only get markets that haven't ended yet
   });
 
-  log.info(`Fetched ${rawMarkets.length} markets from Polymarket`);
+  // Additional safety: filter out any markets with endDate in the past
+  const now = new Date();
+  const openMarkets = rawMarkets.filter((m) => {
+    if (!m.endDate) return true; // Keep if no end date
+    const endDate = new Date(m.endDate);
+    return endDate > now;
+  });
+
+  log.info(`Fetched ${rawMarkets.length} markets, ${openMarkets.length} are open`);
 
   // Step 2: Pre-filter by volume/liquidity if specified
-  let filteredMarkets = rawMarkets;
+  let filteredMarkets = openMarkets;
 
   if (input.minVolume !== undefined) {
     filteredMarkets = filteredMarkets.filter(
@@ -179,7 +189,7 @@ export async function runDiscovery(input: DiscoveryInput): Promise<DiscoveryResu
 
   // Step 6: Save normalized market data for selected markets
   for (const selected of selectedMarkets) {
-    const rawMarket = rawMarkets.find((m) => m.id === selected.id);
+    const rawMarket = openMarkets.find((m) => m.id === selected.id);
     if (rawMarket) {
       const normalized = normalizeGammaMarket(rawMarket);
       const marketDir = path.join(config.defaults.dataDir, "markets", selected.id);
@@ -195,14 +205,14 @@ export async function runDiscovery(input: DiscoveryInput): Promise<DiscoveryResu
 
   log.info("Discovery complete", {
     found: selectedMarkets.length,
-    totalFetched: rawMarkets.length,
+    totalFetched: openMarkets.length,
     costUsd: agentResult.costUsd,
     durationMs: duration,
   });
 
   return {
     markets: selectedMarkets,
-    totalFetched: rawMarkets.length,
+    totalFetched: openMarkets.length,
     costUsd: agentResult.costUsd,
     durationMs: duration,
   };
@@ -223,7 +233,18 @@ export async function quickDiscovery(input: {
     active: true,
   });
 
-  let filtered = results;
+  // Filter for open markets only (not closed, endDate in future)
+  const now = new Date();
+  let filtered = results.filter((m) => {
+    // Exclude closed markets
+    if (m.closed) return false;
+    // Exclude markets with endDate in the past
+    if (m.endDate) {
+      const endDate = new Date(m.endDate);
+      if (endDate <= now) return false;
+    }
+    return true;
+  });
 
   if (input.minVolume !== undefined) {
     filtered = filtered.filter(

@@ -1,10 +1,30 @@
 #!/usr/bin/env node
 /**
- * PM Agent CLI
+ * PM Agent CLI - Entry Point
  * Research agent for Polymarket prediction markets
+ *
+ * EXECUTION FLOW:
+ * ===============
+ * 1. Load environment variables from .env (dotenv/config)
+ * 2. Parse CLI arguments (parseArgs)
+ * 3. Validate configuration (getConfig)
+ * 4. Branch based on command:
+ *    - "discover" → quickDiscovery() - Just find markets, no AI
+ *    - "research" → runPipeline() - Full 4-phase pipeline with AI agents
+ * 5. Display results to console
+ *
+ * USAGE:
+ *   npm run research -- bitcoin           # Full pipeline
+ *   npm run discover -- crypto            # Just discovery
+ *   npm run research -- --topic "AI" -m 3 # Custom options
  */
 
+// ============================================================
+// STEP 1: Load environment variables from .env file
+// This runs immediately on import, before any other code
+// ============================================================
 import "dotenv/config";
+
 import { logger } from "./core/logger.js";
 import { getConfig } from "./core/config.js";
 import { runPipeline, type PipelineConfig } from "./pipeline/research-pipeline.js";
@@ -156,26 +176,41 @@ function displayResults(result: Awaited<ReturnType<typeof runPipeline>>): void {
   console.log("\n" + "=".repeat(60));
 }
 
+// ============================================================
+// MAIN ENTRY POINT
+// ============================================================
 /**
- * Main entry point
+ * Main entry point - orchestrates the entire CLI flow
+ *
+ * Flow:
+ *   parseArgs() → validate config → branch to discover/research → display results
  */
 async function main(): Promise<void> {
+  // --------------------------------------------------------
+  // STEP 2: Parse command line arguments
+  // Extracts: command (discover/research), topic, options
+  // --------------------------------------------------------
   const { command, topic, options } = parseArgs();
 
-  // Handle help
+  // Handle help or missing topic
   if (command === "help" || (!topic && command !== "help")) {
     printHelp();
     process.exit(command === "help" ? 0 : 1);
   }
 
-  // Set log level
+  // Set log level based on --verbose flag
   if (options.verbose) {
     logger.setLevel("debug");
   } else {
     logger.setLevel("info");
   }
 
-  // Validate config
+  // --------------------------------------------------------
+  // STEP 3: Validate configuration
+  // Ensures all required env vars are present:
+  //   ANTHROPIC_API_KEY, PARALLEL_API_KEY, POLYMARKET_PROXY_URL, PROXY_SECRET
+  // Fails fast if missing - no point continuing without these
+  // --------------------------------------------------------
   try {
     getConfig();
   } catch (error) {
@@ -190,9 +225,16 @@ async function main(): Promise<void> {
 
   console.log(`\nPM Agent - Researching: "${topic}"\n`);
 
+  // --------------------------------------------------------
+  // STEP 4: Execute based on command
+  // --------------------------------------------------------
   try {
     if (command === "discover") {
-      // Just discover markets
+      // ======================================================
+      // DISCOVER COMMAND: Just find markets, no AI research
+      // Uses quickDiscovery() which searches Polymarket API
+      // directly without running any Claude agents
+      // ======================================================
       console.log("Running market discovery...\n");
 
       const markets = await quickDiscovery({
@@ -201,6 +243,7 @@ async function main(): Promise<void> {
         minVolume: options.minVolume,
       });
 
+      // Display discovered markets
       console.log(`Found ${markets.length} markets:\n`);
       for (const market of markets) {
         console.log(`  ${market.question.slice(0, 70)}...`);
@@ -210,14 +253,21 @@ async function main(): Promise<void> {
         console.log();
       }
     } else {
-      // Full research pipeline
+      // ======================================================
+      // RESEARCH COMMAND: Full 4-phase pipeline with AI
+      // This is the main flow - calls runPipeline() which:
+      //   Phase 1: Discovery (find markets)
+      //   Phase 2: Prepare (fetch market data)
+      //   Phase 3: Research (Claude Sonnet analyzes each market)
+      //   Phase 4: Evaluate (Claude Haiku critiques research)
+      // ======================================================
       const pipelineConfig: PipelineConfig = {
         topic,
         maxMarkets: options.maxMarkets,
         researchDepth: options.depth,
         minVolume: options.minVolume,
-        skipDiscoveryAgent: options.quick,
-        concurrency: 3,
+        skipDiscoveryAgent: options.quick,  // --quick flag skips AI discovery
+        concurrency: 3,  // Run up to 3 agents in parallel
       };
 
       console.log("Running research pipeline...\n");
@@ -226,8 +276,13 @@ async function main(): Promise<void> {
       console.log(`  Discovery: ${pipelineConfig.skipDiscoveryAgent ? "quick" : "agent"}`);
       console.log();
 
+      // *** THIS IS WHERE THE MAGIC HAPPENS ***
+      // runPipeline() orchestrates all 4 phases and returns results
       const result = await runPipeline(pipelineConfig);
 
+      // --------------------------------------------------------
+      // STEP 5: Display results
+      // --------------------------------------------------------
       displayResults(result);
     }
   } catch (error) {

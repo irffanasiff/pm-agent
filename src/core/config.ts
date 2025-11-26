@@ -124,20 +124,29 @@ function loadConfig(): Config {
       dataDir: env.DATA_DIR,
     },
 
+    // ============================================================
+    // AGENT PROFILES
+    // Each profile defines: model, budget, turns, tools
+    // Budgets are per-agent-run, not per-pipeline
+    // ============================================================
     profiles: {
+      // Discovery Agent: Finds relevant markets from pre-fetched list
+      // Uses Sonnet (was Haiku, but Haiku not available in SDK yet)
       discovery: {
         model: "haiku",
-        maxTurns: 5,
-        maxBudgetUsd: 0.05,
-        tools: ["Bash", "Read", "Grep"],
+        maxTurns: 10,           // Increased: needs to read large JSON + write output
+        maxBudgetUsd: 0.50,     // Increased: $0.05 was too low, spent $0.12
+        tools: ["Bash", "Read", "Write", "Grep"],  // Added Write for output
         retries: 2,
         backoffMs: 1000,
       },
 
+      // Research Agent: Deep research on each market
+      // Uses Sonnet for quality, has MCP access for web research
       research: {
         model: "sonnet",
-        maxTurns: 15,
-        maxBudgetUsd: 0.25,
+        maxTurns: 25,           // Increased: complex research needs more turns
+        maxBudgetUsd: 1.00,     // Increased: deep research costs more
         tools: ["Bash", "Read", "Write", "WebSearch"],
         mcpServers: {
           "parallel-task": {
@@ -159,11 +168,13 @@ function loadConfig(): Config {
         backoffMs: 2000,
       },
 
+      // Critic Agent: Evaluates research quality
+      // Uses Sonnet (was Haiku) for better judgment
       critic: {
         model: "haiku",
-        maxTurns: 5,
-        maxBudgetUsd: 0.05,
-        tools: ["Read", "Grep"],
+        maxTurns: 10,           // Increased: needs to read research + write evaluation
+        maxBudgetUsd: 0.50,     // Increased: evaluation needs thorough analysis
+        tools: ["Read", "Write", "Grep"],  // Added Write for output
         retries: 2,
         backoffMs: 1000,
       },

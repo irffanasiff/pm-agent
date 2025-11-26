@@ -267,14 +267,17 @@ export class PolymarketClient {
 
   /**
    * Search markets by query (filters Gamma results)
+   * Only returns open markets by default (closed=false)
    */
   async searchMarkets(query: string, options: {
     limit?: number;
     active?: boolean;
+    closed?: boolean;
   } = {}): Promise<GammaMarket[]> {
     const markets = await this.getMarkets({
       limit: options.limit ?? 100,
       active: options.active ?? true,
+      closed: options.closed ?? false,  // Default to only open markets
     });
 
     const queryLower = query.toLowerCase();

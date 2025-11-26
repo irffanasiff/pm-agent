@@ -1,6 +1,38 @@
 /**
- * Research Pipeline
+ * Research Pipeline - Main Orchestrator
  * Orchestrates the full research flow: Discovery → Research → Critique
+ *
+ * PIPELINE PHASES:
+ * ================
+ * Phase 1: DISCOVERY
+ *   - Find markets matching the topic
+ *   - Either quickDiscovery() (no AI) or runDiscovery() (with AI)
+ *   - Output: List of SelectedMarket objects
+ *
+ * Phase 2: PREPARE DATA
+ *   - Fetch fresh market data from Polymarket API
+ *   - Save meta.json and orderbook.json for each market
+ *   - Runs in parallel for all markets
+ *
+ * Phase 3: RESEARCH (parallel)
+ *   - Run Research Agent (Claude Sonnet) for each market
+ *   - Agent uses WebSearch + MCP tools to gather information
+ *   - Output: research.json + research.md for each market
+ *   - Processes in batches of `concurrency` (default: 3)
+ *
+ * Phase 4: EVALUATION (parallel)
+ *   - Run Critic Agent (Claude Haiku) for each researched market
+ *   - Evaluates quality, identifies issues, gives verdict
+ *   - Output: evaluation.json for each market
+ *   - Marks markets as approved/revise/reject
+ *
+ * CALL FLOW:
+ * ==========
+ * index.ts:281 → runPipeline(config)
+ *                     ↓
+ *               ResearchPipeline.run(config)
+ *                     ↓
+ *               Phase 1 → Phase 2 → Phase 3 → Phase 4 → Return results
  */
 
 import fs from "fs/promises";
@@ -65,8 +97,12 @@ export interface PipelineResult {
   approvedMarkets: string[];
 }
 
+// ============================================================
+// RESEARCH PIPELINE CLASS
+// ============================================================
 /**
  * Research Pipeline class
+ * Orchestrates all 4 phases of the research process
  */
 export class ResearchPipeline {
   private log = logger.child({ component: "pipeline" });
@@ -74,22 +110,28 @@ export class ResearchPipeline {
 
   /**
    * Run the full research pipeline
+   *
+   * EXECUTION FLOW:
+   * Phase 1: Discovery → Phase 2: Prepare → Phase 3: Research → Phase 4: Evaluate
+   *
+   * @param config - Pipeline configuration (topic, maxMarkets, depth, etc.)
+   * @returns PipelineResult with all research and evaluations
    */
   async run(config: PipelineConfig): Promise<PipelineResult> {
-    const correlationId = crypto.randomUUID();
+    const correlationId = crypto.randomUUID();  // Unique ID for tracing
     const startTime = Date.now();
 
     this.log.info("Pipeline started", { correlationId, config });
 
     const appConfig = getConfig();
 
-    // Initialize result
+    // Initialize result object to accumulate all output
     const result: PipelineResult = {
       correlationId,
       config,
       discovery: { markets: [], costUsd: 0, durationMs: 0 },
-      research: new Map(),
-      evaluations: new Map(),
+      research: new Map(),      // marketId → ResearchOutput or Error
+      evaluations: new Map(),   // marketId → EvaluationOutput or Error
       summary: {
         marketsFound: 0,
         marketsResearched: 0,
@@ -101,11 +143,15 @@ export class ResearchPipeline {
     };
 
     try {
-      // Phase 1: Discovery
+      // ========================================================
+      // PHASE 1: DISCOVERY
+      // Find markets matching the topic
+      // ========================================================
       this.log.info("Phase 1: Discovery", { correlationId });
 
       if (config.skipDiscoveryAgent) {
-        // Quick discovery without agent
+        // --quick flag: Use simple keyword search (no AI)
+        // Faster and cheaper, but less intelligent filtering
         const markets = await quickDiscovery({
           topic: config.topic,
           maxResults: config.maxMarkets ?? 5,
@@ -113,11 +159,14 @@ export class ResearchPipeline {
         });
         result.discovery = {
           markets,
-          costUsd: 0,
+          costUsd: 0,  // No AI cost
           durationMs: Date.now() - startTime,
         };
       } else {
-        // Full discovery with agent
+        // Full discovery with AI agent (Claude Haiku)
+        // Agent reads pre-fetched markets and intelligently selects
+        // *** FIRST runAgent() CALL HAPPENS HERE ***
+        // discovery.ts:135 → runAgent({ profile: "discovery", ... })
         const discoveryResult = await runDiscovery({
           topic: config.topic,
           maxResults: config.maxMarkets ?? 5,
@@ -137,31 +186,43 @@ export class ResearchPipeline {
 
       this.log.info(`Found ${result.discovery.markets.length} markets`, { correlationId });
 
+      // Early exit if no markets found
       if (result.discovery.markets.length === 0) {
         this.log.warn("No markets found, ending pipeline", { correlationId });
         result.summary.totalDurationMs = Date.now() - startTime;
         return result;
       }
 
-      // Phase 2: Prepare market data (fetch from Polymarket)
+      // ========================================================
+      // PHASE 2: PREPARE MARKET DATA
+      // Fetch fresh data from Polymarket API for each market
+      // ========================================================
       this.log.info("Phase 2: Fetching market data", { correlationId });
 
+      // Run in parallel for all markets
       await Promise.all(
         result.discovery.markets.map((m) => this.prepareMarketData(m.id))
       );
+      // After this: data/markets/{id}/meta.json and orderbook.json exist
 
-      // Phase 3: Research (parallel per market)
+      // ========================================================
+      // PHASE 3: RESEARCH (parallel, batched)
+      // Run Research Agent (Claude Sonnet) for each market
+      // ========================================================
       this.log.info("Phase 3: Research", {
         correlationId,
         count: result.discovery.markets.length,
       });
 
-      const concurrency = config.concurrency ?? 3;
+      const concurrency = config.concurrency ?? 3;  // Max parallel agents
       const marketIds = result.discovery.markets.map((m) => m.id);
 
+      // Process in batches to control parallelism
       for (let i = 0; i < marketIds.length; i += concurrency) {
         const batch = marketIds.slice(i, i + concurrency);
 
+        // Run up to 3 research agents in parallel
+        // Each calls: research.ts:87 → runAgent({ profile: "research", ... })
         const batchResults = await Promise.allSettled(
           batch.map((marketId) =>
             runResearch({
@@ -172,6 +233,7 @@ export class ResearchPipeline {
           )
         );
 
+        // Collect results (success or error) for each market
         for (let j = 0; j < batch.length; j++) {
           const marketId = batch[j];
           const res = batchResults[j];
@@ -181,6 +243,7 @@ export class ResearchPipeline {
             result.summary.totalCostUsd += res.value.costUsd;
             result.summary.marketsResearched++;
           } else {
+            // Store error for this market
             result.research.set(
               marketId,
               res.reason instanceof Error
@@ -191,16 +254,23 @@ export class ResearchPipeline {
         }
       }
 
-      // Phase 4: Evaluation (parallel)
+      // ========================================================
+      // PHASE 4: EVALUATION (parallel, batched)
+      // Run Critic Agent (Claude Haiku) for each researched market
+      // ========================================================
       this.log.info("Phase 4: Evaluation", { correlationId });
 
+      // Only evaluate markets that were successfully researched
       const researchedIds = Array.from(result.research.entries())
         .filter(([_, r]) => !(r instanceof Error))
         .map(([id]) => id);
 
+      // Process in batches to control parallelism
       for (let i = 0; i < researchedIds.length; i += concurrency) {
         const batch = researchedIds.slice(i, i + concurrency);
 
+        // Run up to 3 critic agents in parallel
+        // Each calls: critic.ts:84 → runAgent({ profile: "critic", ... })
         const batchResults = await Promise.allSettled(
           batch.map((marketId) =>
             runCritic({
@@ -210,6 +280,7 @@ export class ResearchPipeline {
           )
         );
 
+        // Collect evaluations and track approvals
         for (let j = 0; j < batch.length; j++) {
           const marketId = batch[j];
           const res = batchResults[j];
@@ -218,6 +289,7 @@ export class ResearchPipeline {
             result.evaluations.set(marketId, res.value.evaluation);
             result.summary.totalCostUsd += res.value.costUsd;
 
+            // Track approved markets (score >= 7, no critical flags)
             if (res.value.approved) {
               result.approvedMarkets.push(marketId);
               result.summary.marketsApproved++;
@@ -233,7 +305,9 @@ export class ResearchPipeline {
         }
       }
 
-      // Finalize
+      // ========================================================
+      // FINALIZE
+      // ========================================================
       result.summary.totalDurationMs = Date.now() - startTime;
 
       this.log.info("Pipeline complete", {
@@ -241,10 +315,11 @@ export class ResearchPipeline {
         summary: result.summary,
       });
 
-      // Save pipeline summary
+      // Save pipeline summary to data/pipelines/{correlationId}.json
       await this.savePipelineSummary(correlationId, result);
 
       return result;
+
     } catch (error) {
       this.log.error("Pipeline failed", error, { correlationId });
       result.summary.totalDurationMs = Date.now() - startTime;
@@ -261,13 +336,18 @@ export class ResearchPipeline {
     await fs.mkdir(marketDir, { recursive: true });
 
     try {
-      // Fetch fresh market data
-      const markets = await this.client.getMarkets({ limit: 100, active: true });
+      // Fetch fresh market data (only open markets)
+      const markets = await this.client.getMarkets({
+        limit: 100,
+        active: true,
+        closed: false,  // Only get open markets
+      });
       const market = markets.find((m) => m.id === marketId);
 
       if (market) {
         const normalized = normalizeGammaMarket(market);
         await saveMarketMeta(normalized);
+        this.log.debug(`Saved market meta for ${marketId}`);
 
         // Try to get orderbook if we have token IDs
         if (normalized.outcomeYes.tokenId) {
@@ -285,6 +365,8 @@ export class ResearchPipeline {
             // Orderbook might not exist for all markets
           }
         }
+      } else {
+        this.log.warn(`Market ${marketId} not found in API response`);
       }
     } catch (error) {
       this.log.warn(`Failed to prepare market data: ${marketId}`, {
