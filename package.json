@@ -1,32 +1,36 @@
 {
-  "name": "pm-agent",
+  "name": "probable",
   "version": "1.0.0",
-  "description": "Polymarket research agent using Claude Agent SDK",
-  "main": "dist/index.js",
+  "description": "Probable - AI-powered prediction markets trading platform",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "research": "tsx src/index.ts research",
-    "discover": "tsx src/index.ts discover",
-    "dev": "tsx src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "clean": "turbo clean && rm -rf node_modules",
+    "agents:dev": "pnpm --filter @probable/agents dev",
+    "detector:dev": "pnpm --filter @probable/trade-detector dev"
   },
   "keywords": [
     "polymarket",
+    "prediction-markets",
+    "trading",
     "agent",
-    "claude"
+    "claude",
+    "ai"
   ],
   "author": "",
   "license": "ISC",
-  "type": "module",
   "devDependencies": {
     "@types/node": "^24.10.1",
     "tsx": "^4.20.6",
+    "turbo": "^2.5.0",
     "typescript": "^5.9.3"
   },
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.54",
-    "crypto-js": "^4.2.0",
-    "dotenv": "^17.2.3",
-    "zod": "^4.1.13"
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

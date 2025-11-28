@@ -1,3 +1,0 @@
-api - 019abfec-2247-7957-ac6c-d4ad9ad2bafd
-secret - eTsKh1iWeDz9m8kZ7waSJDpRnzgQHqPv6H5V2zp-VBU=
-passphrase - 7280aebdc136e344c53de9f7512948ac516c788d44338126984794670d776d35

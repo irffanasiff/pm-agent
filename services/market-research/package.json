@@ -1,0 +1,26 @@
+{
+  "name": "@probable/market-research",
+  "version": "1.0.0",
+  "description": "Research agent pipeline for Polymarket analysis",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@probable/core": "workspace:*",
+    "@probable/polymarket": "workspace:*",
+    "@probable/db": "workspace:*",
+    "dotenv": "^16.4.5",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.4"
+  }
+}

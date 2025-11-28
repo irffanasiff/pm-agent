@@ -1,0 +1,23 @@
+{
+  "name": "@probable/core",
+  "version": "1.0.0",
+  "description": "Core utilities for Probable platform",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "zod": "^4.1.13"
+  }
+}
